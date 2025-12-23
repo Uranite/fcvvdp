@@ -264,7 +264,8 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     print("\x1b[38;5;208mfcvvdp\x1b[0m by Halide Compression, LLC | {s}\n", .{c.cvvdp_version_string()});
 
-    var args = std.process.args();
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
     _ = args.next();
 
     var ref_filename: ?[]const u8 = null;
