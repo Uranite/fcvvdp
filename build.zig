@@ -40,12 +40,11 @@ pub fn build(b: *std.Build) void {
         "-Wall",
         "-Wextra",
         "-Wpedantic",
-        "-ffast-math",
         "-O3",
     };
     cvvdp.root_module.addCSourceFiles(.{
         .files = &cvvdp_sources,
-        .flags = if (flto) &cvvdp_flags ++ &[_][]const u8{"-flto"} else &cvvdp_flags,
+        .flags = if (flto) &cvvdp_flags ++ &[_][]const u8{"-flto=thin"} else &cvvdp_flags,
     });
     cvvdp.root_module.addIncludePath(b.path("."));
 
@@ -53,7 +52,7 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(cvvdp);
 
-    const spng = b.dependency("spng", .{.target = target, .optimize = optimize, .zlib = zlib_opt, .strip = strip, .multithreading = true}).artifact("spng");
+    const spng = b.dependency("spng", .{.target = target, .optimize = optimize, .zlib = zlib_opt, .strip = strip}).artifact("spng");
 
     // 'fcvvdp' executable
     const cvvdpenc = b.addExecutable(.{
@@ -66,16 +65,9 @@ pub fn build(b: *std.Build) void {
             .strip = strip,
         }),
     });
-
-    cvvdpenc.root_module.addCSourceFiles(.{
-        .files = &cvvdp_sources,
-        .flags = if (flto) &cvvdp_flags ++ &[_][]const u8{"-flto"} else &cvvdp_flags,
-    });
-    cvvdpenc.root_module.addIncludePath(b.path("."));
-
     cvvdpenc.root_module.addOptions("build_opts", options);
     cvvdpenc.root_module.addIncludePath(b.path("."));
-    // cvvdpenc.root_module.linkLibrary(cvvdp);
+    cvvdpenc.root_module.linkLibrary(cvvdp);
     cvvdpenc.root_module.linkLibrary(spng);
     b.installArtifact(cvvdpenc);
 }
