@@ -27,7 +27,9 @@
 #define SPNG_VERSION_PATCH 4
 
 #define SPNG_USE_ZLIB_RS 1
+#ifndef _MSC_VER
 #define SPNG_MULTITHREADING 1
+#endif
 
 enum spng_errno {
     SPNG_IO_ERROR = -2,

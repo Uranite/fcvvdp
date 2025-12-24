@@ -264,12 +264,13 @@ pub fn main() !void {
     const allocator = gpa.allocator();
     print("\x1b[38;5;208mfcvvdp\x1b[0m by Halide Compression, LLC | {s}\n", .{c.cvvdp_version_string()});
 
-    var args = std.process.args();
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
     _ = args.next();
 
     var ref_filename: ?[]const u8 = null;
     var dis_filename: ?[]const u8 = null;
-    var display_model: c_uint = @intCast(c.CVVDP_DISPLAY_STANDARD_FHD);
+    var display_model: c.FcvvdpDisplayModel = c.CVVDP_DISPLAY_STANDARD_FHD;
     var verbose = false;
     var json_output = false;
 

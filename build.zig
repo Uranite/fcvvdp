@@ -69,6 +69,7 @@ pub fn build(b: *std.Build) void {
         .flags = if (flto) &cvvdp_flags ++ &[_][]const u8{"-flto=thin"} else &cvvdp_flags,
     });
     spng.root_module.addIncludePath(b.path("third-party/"));
+    spng.root_module.addIncludePath(b.path("include"));
 
     // 'fcvvdp' executable
     const cvvdpenc = b.addExecutable(.{
@@ -83,9 +84,13 @@ pub fn build(b: *std.Build) void {
     });
     cvvdpenc.root_module.addOptions("build_opts", options);
     cvvdpenc.root_module.addIncludePath(b.path("."));
+    cvvdpenc.root_module.addLibraryPath(b.path("lib"));
     cvvdpenc.root_module.linkLibrary(cvvdp);
     cvvdpenc.root_module.linkLibrary(spng);
-    cvvdpenc.root_module.linkSystemLibrary("z_rs", .{ .preferred_link_mode = .static });
-    cvvdpenc.root_module.linkSystemLibrary("unwind", .{ .preferred_link_mode = .static });
+    cvvdpenc.root_module.addObjectFile(b.path("lib/z_rs.dll.lib"));
+    b.installBinFile("lib/z_rs.dll", "z_rs.dll");
+    cvvdpenc.root_module.linkSystemLibrary("ws2_32", .{});
+    cvvdpenc.root_module.linkSystemLibrary("userenv", .{});
+    cvvdpenc.root_module.linkSystemLibrary("bcrypt", .{});
     b.installArtifact(cvvdpenc);
 }
