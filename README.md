@@ -44,6 +44,7 @@ Compilation requires:
 - [zlib-rs](https://github.com/trifectatechfoundation/zlib-rs)
 - [libunwind](https://github.com/libunwind/libunwind)
 - [Zig](https://ziglang.org/) 0.15.x
+- macOS, Linux, or Unix-like operating system
 
 ### Binary
 
