@@ -445,8 +445,10 @@ FcvvdpError cvvdp_temporal_filter_init(TemporalFilter *const filter,
     for (int j = 0; j < 4; j++) {
         filter->kernel[j] = cvvdp_alloc_float(filter->size);
         if (!filter->kernel[j]) {
-            for (int k = 0; k < j; k++)
+            for (int k = 0; k < j; k++) {
                 free(filter->kernel[k]);
+                filter->kernel[k] = NULL;
+            }
             return CVVDP_ERROR_OUT_OF_MEMORY;
         }
     }
@@ -454,7 +456,10 @@ FcvvdpError cvvdp_temporal_filter_init(TemporalFilter *const filter,
     float* freq = cvvdp_alloc_float(fft_size);
     float* fft_domain = cvvdp_alloc_float(fft_size);
     if (!freq || !fft_domain) {
-        for (int j = 0; j < 4; j++) free(filter->kernel[j]);
+        for (int j = 0; j < 4; j++) {
+            free(filter->kernel[j]);
+            filter->kernel[j] = NULL;
+        }
         free(freq);
         free(fft_domain);
         return CVVDP_ERROR_OUT_OF_MEMORY;
@@ -1681,6 +1686,7 @@ FcvvdpError cvvdp_create(const int width,
                          FcvvdpCtx** const out_c)
 {
     if (!out_c) return CVVDP_ERROR_NULL_POINTER;
+    *out_c = NULL;
     if (width <= 0 || height <= 0) return CVVDP_ERROR_INVALID_DIMENSIONS;
 
     FcvvdpCtx* const c = (FcvvdpCtx*)calloc(1, sizeof(FcvvdpCtx));
@@ -1698,7 +1704,7 @@ FcvvdpError cvvdp_create(const int width,
 
     c->band_frequencies = cvvdp_alloc_float(CVVDP_MAX_LEVELS);
     if (!c->band_frequencies) {
-        free(c);
+        cvvdp_destroy(c);
         return CVVDP_ERROR_OUT_OF_MEMORY;
     }
     c->num_bands = cvvdp_get_band_frequencies(width, height,
@@ -1708,25 +1714,19 @@ FcvvdpError cvvdp_create(const int width,
     FcvvdpError err = cvvdp_csf_init(&c->csf, width, height,
                                      c->display.ppd);
     if (err != CVVDP_OK) {
-        free(c->band_frequencies);
-        free(c);
+        cvvdp_destroy(c);
         return err;
     }
 
     err = cvvdp_temporal_ring_init(&c->ring_ref, width, height, fps);
     if (err != CVVDP_OK) {
-        cvvdp_csf_destroy(&c->csf);
-        free(c->band_frequencies);
-        free(c);
+        cvvdp_destroy(c);
         return err;
     }
 
     err = cvvdp_temporal_ring_init(&c->ring_dis, width, height, fps);
     if (err != CVVDP_OK) {
-        cvvdp_temporal_ring_destroy(&c->ring_ref);
-        cvvdp_csf_destroy(&c->csf);
-        free(c->band_frequencies);
-        free(c);
+        cvvdp_destroy(c);
         return err;
     }
 
