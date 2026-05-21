@@ -43,6 +43,268 @@ static inline float cvvdp_neon_kernel_sum(const float* const kernel,
     return sum;
 }
 
+static inline void cvvdp_apply_display_impl(
+    const CvvdpApplyDisplayTaskData* const data,
+    const int start,
+    const int end)
+{
+    const float Y_peak = data->display->max_luminance;
+    const float Y_black = data->display->black_level;
+    const float Y_refl = data->display->refl_level;
+    const float exposure = data->display->exposure;
+    const float offset = Y_black + Y_refl;
+    int i = start;
+
+    if (data->is_hdr) {
+        const float clamp_min = fmaxf(0.005f, Y_black);
+        const float scale = 100.0f * exposure;
+        const float32x4_t vscale = vdupq_n_f32(scale);
+        const float32x4_t vmin = vdupq_n_f32(clamp_min);
+        const float32x4_t vmax = vdupq_n_f32(Y_peak);
+        const float32x4_t voffset = vdupq_n_f32(offset);
+        for (; i + 4 <= end; i += 4) {
+            float32x4_t val = vmulq_f32(vld1q_f32(data->plane + i), vscale);
+            val = vmaxq_f32(vmin, vminq_f32(vmax, val));
+            vst1q_f32(data->plane + i, vaddq_f32(val, voffset));
+        }
+    } else {
+        const float scale = Y_peak - Y_black;
+        const float32x4_t vexposure = vdupq_n_f32(exposure);
+        const float32x4_t vzero = vdupq_n_f32(0.0f);
+        const float32x4_t vone = vdupq_n_f32(1.0f);
+        const float32x4_t vscale = vdupq_n_f32(scale);
+        const float32x4_t voffset = vdupq_n_f32(offset);
+        for (; i + 4 <= end; i += 4) {
+            float32x4_t val = vmulq_f32(vld1q_f32(data->plane + i), vexposure);
+            val = vmaxq_f32(vzero, vminq_f32(vone, val));
+            vst1q_f32(data->plane + i,
+                      vaddq_f32(vmulq_f32(val, vscale), voffset));
+        }
+    }
+
+    for (; i < end; i++) {
+        float val = data->plane[i];
+        if (data->is_hdr) {
+            val *= 100.0f;
+            val = fmaxf(fmaxf(0.005f, Y_black),
+                        fminf(Y_peak, val * exposure)) + Y_black + Y_refl;
+        } else {
+            val = fclip(val * exposure, 0.0f, 1.0f);
+            val = (Y_peak - Y_black) * val + Y_black + Y_refl;
+        }
+        data->plane[i] = val;
+    }
+}
+
+static inline void cvvdp_rgb_to_xyz_impl(
+    const CvvdpColorTransformTaskData* const data,
+    const int start,
+    const int end)
+{
+    int i = start;
+    for (; i + 4 <= end; i += 4) {
+        const float32x4_t r = vld1q_f32(data->x + i);
+        const float32x4_t g = vld1q_f32(data->y + i);
+        const float32x4_t b = vld1q_f32(data->z + i);
+
+        float32x4_t x = vmulq_n_f32(r, 0.4124564f);
+        x = cvvdp_neon_madd_n(x, g, 0.3575761f);
+        x = cvvdp_neon_madd_n(x, b, 0.1804375f);
+
+        float32x4_t y = vmulq_n_f32(r, 0.2126729f);
+        y = cvvdp_neon_madd_n(y, g, 0.7151522f);
+        y = cvvdp_neon_madd_n(y, b, 0.0721750f);
+
+        float32x4_t z = vmulq_n_f32(r, 0.0193339f);
+        z = cvvdp_neon_madd_n(z, g, 0.1191920f);
+        z = cvvdp_neon_madd_n(z, b, 0.9503041f);
+
+        vst1q_f32(data->x + i, x);
+        vst1q_f32(data->y + i, y);
+        vst1q_f32(data->z + i, z);
+    }
+
+    for (; i < end; i++) {
+        const float ri = data->x[i];
+        const float gi = data->y[i];
+        const float bi = data->z[i];
+
+        data->x[i] = 0.4124564f * ri + 0.3575761f * gi + 0.1804375f * bi;
+        data->y[i] = 0.2126729f * ri + 0.7151522f * gi + 0.0721750f * bi;
+        data->z[i] = 0.0193339f * ri + 0.1191920f * gi + 0.9503041f * bi;
+    }
+}
+
+static inline void cvvdp_xyz_to_dkl_impl(
+    const CvvdpColorTransformTaskData* const data,
+    const int start,
+    const int end)
+{
+    int i = start;
+    for (; i + 4 <= end; i += 4) {
+        const float32x4_t x = vld1q_f32(data->x + i);
+        const float32x4_t y = vld1q_f32(data->y + i);
+        const float32x4_t z = vld1q_f32(data->z + i);
+
+        float32x4_t L = vmulq_n_f32(x, 0.187596268556126f);
+        L = cvvdp_neon_madd_n(L, y, 0.585168649077728f);
+        L = cvvdp_neon_madd_n(L, z, -0.026384263306304f);
+
+        float32x4_t M = vmulq_n_f32(x, -0.133397430663221f);
+        M = cvvdp_neon_madd_n(M, y, 0.405505777260049f);
+        M = cvvdp_neon_madd_n(M, z, 0.034502127690364f);
+
+        float32x4_t S = vmulq_n_f32(x, 0.000244379021663f);
+        S = cvvdp_neon_madd_n(S, y, -0.000542995890619f);
+        S = cvvdp_neon_madd_n(S, z, 0.019406849066323f);
+
+        const float32x4_t lum = vaddq_f32(L, M);
+        const float32x4_t rg =
+            vsubq_f32(lum, vmulq_n_f32(M, 3.311130179947035f));
+        const float32x4_t yv =
+            vsubq_f32(vmulq_n_f32(S, 50.977571328718781f), lum);
+
+        vst1q_f32(data->x + i, lum);
+        vst1q_f32(data->y + i, rg);
+        vst1q_f32(data->z + i, yv);
+    }
+
+    for (; i < end; i++) {
+        const float xi = data->x[i];
+        const float yi = data->y[i];
+        const float zi = data->z[i];
+
+        const float L =
+            0.187596268556126f * xi + 0.585168649077728f * yi -
+            0.026384263306304f * zi;
+        const float M =
+            -0.133397430663221f * xi + 0.405505777260049f * yi +
+            0.034502127690364f * zi;
+        const float S =
+            0.000244379021663f * xi - 0.000542995890619f * yi +
+            0.019406849066323f * zi;
+
+        const float lum = L + M;
+        data->x[i] = lum;
+        data->y[i] = lum - 3.311130179947035f * M;
+        data->z[i] = 50.977571328718781f * S - lum;
+    }
+}
+
+static inline void cvvdp_contrast_impl(
+    const CvvdpContrastTaskData* const data,
+    const int start,
+    const int end)
+{
+    const float32x4_t vfloor = vdupq_n_f32(0.01f);
+    const float32x4_t vscale = vdupq_n_f32(data->contrast_scale);
+    int i = start;
+    for (; i + 4 <= end; i += 4) {
+        const float32x4_t src = vld1q_f32(data->src + i);
+        const float32x4_t expanded = vld1q_f32(data->expanded + i);
+        const float32x4_t L_bkg =
+            vmaxq_f32(vfloor, vld1q_f32(data->L_bkg + i));
+        const float32x4_t contrast =
+            vdivq_f32(vsubq_f32(src, expanded), L_bkg);
+        vst1q_f32(data->dst + i, vmulq_f32(contrast, vscale));
+    }
+
+    for (; i < end; i++) {
+        data->dst[i] =
+            ((data->src[i] - data->expanded[i]) / fmaxf(0.01f, data->L_bkg[i])) *
+            data->contrast_scale;
+    }
+}
+
+static inline void cvvdp_luma_contrast_impl(
+    const CvvdpContrastTaskData* const data,
+    const int start,
+    const int end)
+{
+    const float32x4_t vfloor = vdupq_n_f32(0.01f);
+    const float32x4_t vscale = vdupq_n_f32(data->contrast_scale);
+    int i = start;
+    for (; i + 4 <= end; i += 4) {
+        const float32x4_t src = vld1q_f32(data->src + i);
+        const float32x4_t expanded = vld1q_f32(data->expanded + i);
+        const float32x4_t L_bkg = vmaxq_f32(vfloor, expanded);
+        const float32x4_t contrast =
+            vdivq_f32(vsubq_f32(src, expanded), L_bkg);
+        vst1q_f32(data->L_bkg + i, L_bkg);
+        vst1q_f32(data->dst + i, vmulq_f32(contrast, vscale));
+    }
+
+    for (; i < end; i++) {
+        const float L_bkg = fmaxf(0.01f, data->expanded[i]);
+        data->L_bkg[i] = L_bkg;
+        data->dst[i] =
+            ((data->src[i] - data->expanded[i]) / L_bkg) *
+            data->contrast_scale;
+    }
+}
+
+static inline void cvvdp_normalize_impl(
+    const CvvdpNormalizeTaskData* const data,
+    const int start,
+    const int end)
+{
+    const float32x4_t denom = vdupq_n_f32(data->denom);
+    int i = start;
+    for (; i + 4 <= end; i += 4) {
+        vst1q_f32(data->dst + i,
+                  vdivq_f32(vld1q_f32(data->src + i), denom));
+    }
+
+    for (; i < end; i++)
+        data->dst[i] = data->src[i] / data->denom;
+}
+
+static inline void cvvdp_min_abs_impl(
+    const CvvdpMinAbsTaskData* const data,
+    const int start,
+    const int end)
+{
+    int i = start;
+    for (; i + 4 <= end; i += 4) {
+        const float32x4_t ref = vabsq_f32(vld1q_f32(data->ref + i));
+        const float32x4_t dst = vabsq_f32(vld1q_f32(data->dst + i));
+        vst1q_f32(data->out + i, vminq_f32(ref, dst));
+    }
+
+    for (; i < end; i++)
+        data->out[i] = fminf(fabsf(data->ref[i]), fabsf(data->dst[i]));
+}
+
+static inline void cvvdp_baseband_diff_impl(
+    const CvvdpBasebandDiffTaskData* const data,
+    const int start,
+    const int end)
+{
+    const int lev_size = (int)data->lev_size;
+    int idx = start;
+
+    while (idx < end) {
+        const int ch = idx / lev_size;
+        const int ch_end = imin(end, (ch + 1) * lev_size);
+        const float scale = data->sensitivity[ch] * CVVDP_BASEBAND_WEIGHT[ch];
+        const float32x4_t vscale = vdupq_n_f32(scale);
+        int i = idx - ch * lev_size;
+
+        for (; idx + 4 <= ch_end; idx += 4, i += 4) {
+            const float32x4_t ref = vld1q_f32(data->ref_level[ch] + i);
+            const float32x4_t dst = vld1q_f32(data->dst_level[ch] + i);
+            const float32x4_t diff = vabsq_f32(vsubq_f32(ref, dst));
+            vst1q_f32(data->d + idx, vmulq_f32(diff, vscale));
+        }
+
+        for (; idx < ch_end; idx++, i++) {
+            const float diff =
+                fabsf(data->ref_level[ch][i] - data->dst_level[ch][i]);
+            data->d[idx] = diff * scale;
+        }
+    }
+}
+
 static inline const float* cvvdp_temporal_ring_frame_neon(
     const TemporalRingBuf* const ring,
     int age)

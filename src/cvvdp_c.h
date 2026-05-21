@@ -20,6 +20,131 @@
 #include "internal.h"
 #include "util.h"
 
+static inline void cvvdp_apply_display_impl(
+    const CvvdpApplyDisplayTaskData* const data,
+    const int start,
+    const int end)
+{
+    const float Y_peak = data->display->max_luminance;
+    const float Y_black = data->display->black_level;
+    const float Y_refl = data->display->refl_level;
+    const float exposure = data->display->exposure;
+
+    for (int i = start; i < end; i++) {
+        float val = data->plane[i];
+        if (data->is_hdr) {
+            val *= 100.0f;
+            val = fmaxf(fmaxf(0.005f, Y_black),
+                        fminf(Y_peak, val * exposure)) + Y_black + Y_refl;
+        } else {
+            val = fclip(val * exposure, 0.0f, 1.0f);
+            val = (Y_peak - Y_black) * val + Y_black + Y_refl;
+        }
+        data->plane[i] = val;
+    }
+}
+
+static inline void cvvdp_rgb_to_xyz_impl(
+    const CvvdpColorTransformTaskData* const data,
+    const int start,
+    const int end)
+{
+    for (int i = start; i < end; i++) {
+        const float ri = data->x[i];
+        const float gi = data->y[i];
+        const float bi = data->z[i];
+
+        data->x[i] = 0.4124564f * ri + 0.3575761f * gi + 0.1804375f * bi;
+        data->y[i] = 0.2126729f * ri + 0.7151522f * gi + 0.0721750f * bi;
+        data->z[i] = 0.0193339f * ri + 0.1191920f * gi + 0.9503041f * bi;
+    }
+}
+
+static inline void cvvdp_xyz_to_dkl_impl(
+    const CvvdpColorTransformTaskData* const data,
+    const int start,
+    const int end)
+{
+    for (int i = start; i < end; i++) {
+        const float xi = data->x[i];
+        const float yi = data->y[i];
+        const float zi = data->z[i];
+
+        const float L =
+            0.187596268556126f * xi + 0.585168649077728f * yi -
+            0.026384263306304f * zi;
+        const float M =
+            -0.133397430663221f * xi + 0.405505777260049f * yi +
+            0.034502127690364f * zi;
+        const float S =
+            0.000244379021663f * xi - 0.000542995890619f * yi +
+            0.019406849066323f * zi;
+
+        const float lum = L + M;
+        data->x[i] = lum;
+        data->y[i] = lum - 3.311130179947035f * M;
+        data->z[i] = 50.977571328718781f * S - lum;
+    }
+}
+
+static inline void cvvdp_contrast_impl(
+    const CvvdpContrastTaskData* const data,
+    const int start,
+    const int end)
+{
+    for (int i = start; i < end; i++) {
+        data->dst[i] =
+            ((data->src[i] - data->expanded[i]) / fmaxf(0.01f, data->L_bkg[i])) *
+            data->contrast_scale;
+    }
+}
+
+static inline void cvvdp_luma_contrast_impl(
+    const CvvdpContrastTaskData* const data,
+    const int start,
+    const int end)
+{
+    for (int i = start; i < end; i++) {
+        const float L_bkg = fmaxf(0.01f, data->expanded[i]);
+        data->L_bkg[i] = L_bkg;
+        data->dst[i] =
+            ((data->src[i] - data->expanded[i]) / L_bkg) *
+            data->contrast_scale;
+    }
+}
+
+static inline void cvvdp_normalize_impl(
+    const CvvdpNormalizeTaskData* const data,
+    const int start,
+    const int end)
+{
+    for (int i = start; i < end; i++)
+        data->dst[i] = data->src[i] / data->denom;
+}
+
+static inline void cvvdp_min_abs_impl(
+    const CvvdpMinAbsTaskData* const data,
+    const int start,
+    const int end)
+{
+    for (int i = start; i < end; i++)
+        data->out[i] = fminf(fabsf(data->ref[i]), fabsf(data->dst[i]));
+}
+
+static inline void cvvdp_baseband_diff_impl(
+    const CvvdpBasebandDiffTaskData* const data,
+    const int start,
+    const int end)
+{
+    const int lev_size = (int)data->lev_size;
+    for (int idx = start; idx < end; idx++) {
+        const int ch = idx / lev_size;
+        const int i = idx - ch * lev_size;
+        const float diff = fabsf(data->ref_level[ch][i] - data->dst_level[ch][i]);
+        data->d[idx] = diff * data->sensitivity[ch] * CVVDP_BASEBAND_WEIGHT[ch];
+    }
+}
+
 static inline const float* cvvdp_temporal_ring_frame_c(
     const TemporalRingBuf* const ring,
     int age)

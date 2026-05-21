@@ -556,70 +556,24 @@ static void cvvdp_apply_display_task(void* user_data,
                                      const int start,
                                      const int end)
 {
-    CvvdpApplyDisplayTaskData* const data =
-        (CvvdpApplyDisplayTaskData*)user_data;
-    const float Y_peak = data->display->max_luminance;
-    const float Y_black = data->display->black_level;
-    const float Y_refl = data->display->refl_level;
-    const float exposure = data->display->exposure;
-
-    for (int i = start; i < end; i++) {
-        float val = data->plane[i];
-        if (data->is_hdr) {
-            val *= 100.0f;
-            val = fmaxf(fmaxf(0.005f, Y_black),
-                        fminf(Y_peak, val * exposure)) + Y_black + Y_refl;
-        } else {
-            val = fclip(val * exposure, 0.0f, 1.0f);
-            val = (Y_peak - Y_black) * val + Y_black + Y_refl;
-        }
-        data->plane[i] = val;
-    }
+    cvvdp_apply_display_impl((CvvdpApplyDisplayTaskData*)user_data,
+                             start, end);
 }
 
 static void cvvdp_rgb_to_xyz_task(void* user_data,
                                   const int start,
                                   const int end)
 {
-    CvvdpColorTransformTaskData* const data =
-        (CvvdpColorTransformTaskData*)user_data;
-    for (int i = start; i < end; i++) {
-        const float ri = data->x[i];
-        const float gi = data->y[i];
-        const float bi = data->z[i];
-
-        data->x[i] = 0.4124564f * ri + 0.3575761f * gi + 0.1804375f * bi;
-        data->y[i] = 0.2126729f * ri + 0.7151522f * gi + 0.0721750f * bi;
-        data->z[i] = 0.0193339f * ri + 0.1191920f * gi + 0.9503041f * bi;
-    }
+    cvvdp_rgb_to_xyz_impl((CvvdpColorTransformTaskData*)user_data,
+                          start, end);
 }
 
 static void cvvdp_xyz_to_dkl_task(void* user_data,
                                   const int start,
                                   const int end)
 {
-    CvvdpColorTransformTaskData* const data =
-        (CvvdpColorTransformTaskData*)user_data;
-    for (int i = start; i < end; i++) {
-        const float xi = data->x[i];
-        const float yi = data->y[i];
-        const float zi = data->z[i];
-
-        const float L =
-            0.187596268556126f * xi + 0.585168649077728f * yi -
-            0.026384263306304f * zi;
-        const float M =
-            -0.133397430663221f * xi + 0.405505777260049f * yi +
-            0.034502127690364f * zi;
-        const float S =
-            0.000244379021663f * xi - 0.000542995890619f * yi +
-            0.019406849066323f * zi;
-
-        const float lum = L + M;
-        data->x[i] = lum;
-        data->y[i] = lum - 3.311130179947035f * M;
-        data->z[i] = 50.977571328718781f * S - lum;
-    }
+    cvvdp_xyz_to_dkl_impl((CvvdpColorTransformTaskData*)user_data,
+                          start, end);
 }
 
 static void cvvdp_compute_temporal_channels_task(void* user_data,
@@ -648,35 +602,21 @@ static void cvvdp_contrast_task(void* user_data,
                                 const int start,
                                 const int end)
 {
-    CvvdpContrastTaskData* const data = (CvvdpContrastTaskData*)user_data;
-    for (int i = start; i < end; i++) {
-        data->dst[i] =
-            ((data->src[i] - data->expanded[i]) / fmaxf(0.01f, data->L_bkg[i])) *
-            data->contrast_scale;
-    }
+    cvvdp_contrast_impl((CvvdpContrastTaskData*)user_data, start, end);
 }
 
 static void cvvdp_luma_contrast_task(void* user_data,
                                      const int start,
                                      const int end)
 {
-    CvvdpContrastTaskData* const data = (CvvdpContrastTaskData*)user_data;
-    for (int i = start; i < end; i++) {
-        const float L_bkg = fmaxf(0.01f, data->expanded[i]);
-        data->L_bkg[i] = L_bkg;
-        data->dst[i] =
-            ((data->src[i] - data->expanded[i]) / L_bkg) *
-            data->contrast_scale;
-    }
+    cvvdp_luma_contrast_impl((CvvdpContrastTaskData*)user_data, start, end);
 }
 
 static void cvvdp_normalize_task(void* user_data,
                                  const int start,
                                  const int end)
 {
-    CvvdpNormalizeTaskData* const data = (CvvdpNormalizeTaskData*)user_data;
-    for (int i = start; i < end; i++)
-        data->dst[i] = data->src[i] / data->denom;
+    cvvdp_normalize_impl((CvvdpNormalizeTaskData*)user_data, start, end);
 }
 
 static void cvvdp_csf_weight_task(void* user_data,
@@ -699,9 +639,7 @@ static void cvvdp_min_abs_task(void* user_data,
                                const int start,
                                const int end)
 {
-    CvvdpMinAbsTaskData* const data = (CvvdpMinAbsTaskData*)user_data;
-    for (int i = start; i < end; i++)
-        data->out[i] = fminf(fabsf(data->ref[i]), fabsf(data->dst[i]));
+    cvvdp_min_abs_impl((CvvdpMinAbsTaskData*)user_data, start, end);
 }
 
 static void cvvdp_blur_horizontal_task(void* user_data,
@@ -759,15 +697,8 @@ static void cvvdp_baseband_diff_task(void* user_data,
                                      const int start,
                                      const int end)
 {
-    CvvdpBasebandDiffTaskData* const data =
-        (CvvdpBasebandDiffTaskData*)user_data;
-    const int lev_size = (int)data->lev_size;
-    for (int idx = start; idx < end; idx++) {
-        const int ch = idx / lev_size;
-        const int i = idx - ch * lev_size;
-        const float diff = fabsf(data->ref_level[ch][i] - data->dst_level[ch][i]);
-        data->d[idx] = diff * data->sensitivity[ch] * CVVDP_BASEBAND_WEIGHT[ch];
-    }
+    cvvdp_baseband_diff_impl((CvvdpBasebandDiffTaskData*)user_data,
+                             start, end);
 }
 
 static void cvvdp_norm_task(void* user_data,
@@ -793,18 +724,12 @@ static void cvvdp_norm_task(void* user_data,
 }
 
 void cvvdp_rgb_to_xyz(float* r, float* g, float* b, int count) {
-    for (int i = 0; i < count; i++) {
-        float ri = r[i], gi = g[i], bi = b[i];
-
-        // BT.709 RGB to XYZ
-        float x = 0.4124564f * ri + 0.3575761f * gi + 0.1804375f * bi;
-        float y = 0.2126729f * ri + 0.7151522f * gi + 0.0721750f * bi;
-        float z = 0.0193339f * ri + 0.1191920f * gi + 0.9503041f * bi;
-
-        r[i] = x;
-        g[i] = y;
-        b[i] = z;
-    }
+    CvvdpColorTransformTaskData task = {
+        .x = r,
+        .y = g,
+        .z = b,
+    };
+    cvvdp_rgb_to_xyz_impl(&task, 0, count);
 }
 
 static void cvvdp_rgb_to_xyz_interleaved(CvvdpThreadPool* const pool,
@@ -829,23 +754,12 @@ void cvvdp_xyz_to_dkl(float *const x,
                       float* const z,
                       const int count)
 {
-    for (int i = 0; i < count; i++) {
-        float xi = x[i], yi = y[i], zi = z[i];
-
-        // XYZ to LMS (CIE 2006)
-        float L = 0.187596268556126f * xi + 0.585168649077728f * yi - 0.026384263306304f * zi;
-        float M = -0.133397430663221f * xi + 0.405505777260049f * yi + 0.034502127690364f * zi;
-        float S = 0.000244379021663f * xi - 0.000542995890619f * yi + 0.019406849066323f * zi;
-
-        // LMS to DKL (D65 adapted)
-        float lum = L + M; // luminance
-        float rg = lum - 3.311130179947035f * M; // red-green
-        float yv = 50.977571328718781f * S - lum; // yellow-violet
-
-        x[i] = lum;
-        y[i] = rg;
-        z[i] = yv;
-    }
+    CvvdpColorTransformTaskData task = {
+        .x = x,
+        .y = y,
+        .z = z,
+    };
+    cvvdp_xyz_to_dkl_impl(&task, 0, count);
 }
 
 static void cvvdp_xyz_to_dkl_interleaved(CvvdpThreadPool* const pool,
@@ -870,23 +784,12 @@ void cvvdp_apply_display_model(float* const plane,
                                const Display* display,
                                const bool is_hdr)
 {
-    const float Y_peak = display->max_luminance;
-    const float Y_black = display->black_level;
-    const float Y_refl = display->refl_level;
-    const float exposure = display->exposure;
-
-    for (int i = 0; i < count; i++) {
-        float val = plane[i];
-        if (is_hdr) {
-            val *= 100.0f;
-            val = fmax(fmax(0.005f, Y_black),
-                            fmin(Y_peak, val * exposure)) + Y_black + Y_refl;
-        } else {
-            val = fclip(val * exposure, 0.0f, 1.0f);
-            val = (Y_peak - Y_black) * val + Y_black + Y_refl;
-        }
-        plane[i] = val;
-    }
+    CvvdpApplyDisplayTaskData task = {
+        .plane = plane,
+        .display = display,
+        .is_hdr = is_hdr,
+    };
+    cvvdp_apply_display_impl(&task, 0, count);
 }
 
 static void cvvdp_apply_display_model_interleaved(CvvdpThreadPool* const pool,
@@ -1544,13 +1447,23 @@ static FcvvdpError cvvdp_process_pyramid_serial(FcvvdpCtx* const c,
                 cvvdp_gauss_pyr_reduce(NULL, buf_a, buf_b, cw, ch_h);
                 cvvdp_gauss_pyr_expand(NULL, buf_b, expanded, cw, ch_h);
                 if (!ch) {
-                    for (size_t i = 0; i < lev_size; i++)
-                        L_bkg_pyr[lev][i] = fmaxf(0.01f, expanded[i]);
-                }
-                for (size_t i = 0; i < lev_size; i++) {
-                    const float contrast =
-                        (buf_a[i] - expanded[i]) / fmaxf(0.01f, L_bkg_pyr[lev][i]);
-                    ref_pyr[lev][ch][i] = contrast * (lev == 0 ? 1.0f : 2.0f);
+                    CvvdpContrastTaskData task = {
+                        .src = buf_a,
+                        .expanded = expanded,
+                        .L_bkg = L_bkg_pyr[lev],
+                        .dst = ref_pyr[lev][ch],
+                        .contrast_scale = lev == 0 ? 1.0f : 2.0f,
+                    };
+                    cvvdp_luma_contrast_impl(&task, 0, (int)lev_size);
+                } else {
+                    CvvdpContrastTaskData task = {
+                        .src = buf_a,
+                        .expanded = expanded,
+                        .L_bkg = L_bkg_pyr[lev],
+                        .dst = ref_pyr[lev][ch],
+                        .contrast_scale = lev == 0 ? 1.0f : 2.0f,
+                    };
+                    cvvdp_contrast_impl(&task, 0, (int)lev_size);
                 }
                 float* const t = buf_a;
                 buf_a = buf_b;
@@ -1566,8 +1479,12 @@ static FcvvdpError cvvdp_process_pyramid_serial(FcvvdpCtx* const c,
                     L_bkg_pyr[lev][0] = fmaxf(0.01f, (float)mean);
                 }
                 const float denom = fmaxf(0.01f, L_bkg_pyr[lev][0]);
-                for (size_t i = 0; i < lev_size; i++)
-                    ref_pyr[lev][ch][i] = buf_a[i] / denom;
+                CvvdpNormalizeTaskData task = {
+                    .src = buf_a,
+                    .dst = ref_pyr[lev][ch],
+                    .denom = denom,
+                };
+                cvvdp_normalize_impl(&task, 0, (int)lev_size);
             }
         }
 
@@ -1581,11 +1498,14 @@ static FcvvdpError cvvdp_process_pyramid_serial(FcvvdpCtx* const c,
             if (lev < num_levels - 1) {
                 cvvdp_gauss_pyr_reduce(NULL, buf_a, buf_b, cw, ch_h);
                 cvvdp_gauss_pyr_expand(NULL, buf_b, expanded, cw, ch_h);
-                for (size_t i = 0; i < lev_size; i++) {
-                    const float contrast =
-                        (buf_a[i] - expanded[i]) / fmaxf(0.01f, L_bkg_pyr[lev][i]);
-                    dst_pyr[lev][ch][i] = contrast * (lev == 0 ? 1.0f : 2.0f);
-                }
+                CvvdpContrastTaskData task = {
+                    .src = buf_a,
+                    .expanded = expanded,
+                    .L_bkg = L_bkg_pyr[lev],
+                    .dst = dst_pyr[lev][ch],
+                    .contrast_scale = lev == 0 ? 1.0f : 2.0f,
+                };
+                cvvdp_contrast_impl(&task, 0, (int)lev_size);
                 float* const t = buf_a;
                 buf_a = buf_b;
                 buf_b = t;
@@ -1593,8 +1513,12 @@ static FcvvdpError cvvdp_process_pyramid_serial(FcvvdpCtx* const c,
                 ch_h = (ch_h + 1) / 2;
             } else {
                 const float denom = fmaxf(0.01f, L_bkg_pyr[lev][0]);
-                for (size_t i = 0; i < lev_size; i++)
-                    dst_pyr[lev][ch][i] = buf_a[i] / denom;
+                CvvdpNormalizeTaskData task = {
+                    .src = buf_a,
+                    .dst = dst_pyr[lev][ch],
+                    .denom = denom,
+                };
+                cvvdp_normalize_impl(&task, 0, (int)lev_size);
             }
         }
     }
@@ -1632,43 +1556,31 @@ static FcvvdpError cvvdp_process_pyramid_serial(FcvvdpCtx* const c,
             float** const blurred_min_abs = c->pyr_blurred_min_abs;
             float* const tmp_blur = c->pyr_tmp_blur;
             for (int ch = 0; ch < 4; ch++) {
-                for (size_t i = 0; i < lev_size; i++) {
-                    const float r = fabsf(ref_pyr[lev][ch][i]);
-                    const float d_val = fabsf(dst_pyr[lev][ch][i]);
-                    min_abs[ch][i] = fminf(r, d_val);
-                }
+                CvvdpMinAbsTaskData min_task = {
+                    .ref = ref_pyr[lev][ch],
+                    .dst = dst_pyr[lev][ch],
+                    .out = min_abs[ch],
+                };
+                cvvdp_min_abs_impl(&min_task, 0, (int)lev_size);
 
-                for (int y = 0; y < lev_h; y++) {
-                    float* const tmp_blur_row = &tmp_blur[y * lev_w];
-                    for (int x = 0; x < lev_w; x++) {
-                        float sum = 0.0f;
-                        float wsum = 0.0f;
-                        for (int k = -blur_radius; k <= blur_radius; k++) {
-                            const int sx = x + k;
-                            if (sx >= 0 && sx < lev_w) {
-                                sum += min_abs[ch][y * lev_w + sx] *
-                                    blur_kernel[k + blur_radius];
-                                wsum += blur_kernel[k + blur_radius];
-                            }
-                        }
-                        tmp_blur_row[x] = sum / wsum;
-                    }
-                }
-
-                for (int y = 0; y < lev_h; y++)
-                    for (int x = 0; x < lev_w; x++) {
-                        float sum = 0.0f;
-                        float wsum = 0.0f;
-                        for (int k = -blur_radius; k <= blur_radius; k++) {
-                            const int sy = y + k;
-                            if (sy >= 0 && sy < lev_h) {
-                                sum += tmp_blur[sy * lev_w + x] *
-                                    blur_kernel[k + blur_radius];
-                                wsum += blur_kernel[k + blur_radius];
-                            }
-                        }
-                        blurred_min_abs[ch][y * lev_w + x] = sum / wsum;
-                    }
+                CvvdpBlurTaskData blur_h = {
+                    .src = min_abs[ch],
+                    .dst = tmp_blur,
+                    .width = lev_w,
+                    .height = lev_h,
+                    .kernel = blur_kernel,
+                    .radius = blur_radius,
+                };
+                CvvdpBlurTaskData blur_v = {
+                    .src = tmp_blur,
+                    .dst = blurred_min_abs[ch],
+                    .width = lev_w,
+                    .height = lev_h,
+                    .kernel = blur_kernel,
+                    .radius = blur_radius,
+                };
+                cvvdp_blur_horizontal_impl(&blur_h, 0, lev_h);
+                cvvdp_blur_vertical_impl(&blur_v, 0, lev_h);
             }
 
             float* const d = c->pyr_d;
@@ -1716,16 +1628,25 @@ static FcvvdpError cvvdp_process_pyramid_serial(FcvvdpCtx* const c,
         } else {
             float* const d = c->pyr_d;
 
-            for (int ch = 0; ch < 4; ch++) {
-                const float s =
-                    cvvdp_csf_sensitivity(&c->csf, L_bkg_pyr[lev][0], lev, ch);
-                float* const drow = &d[ch * lev_size];
-                for (size_t i = 0; i < lev_size; i++) {
-                    const float diff =
-                        fabsf(ref_pyr[lev][ch][i] - dst_pyr[lev][ch][i]);
-                    drow[i] = diff * s * CVVDP_BASEBAND_WEIGHT[ch];
-                }
-            }
+            const float* ref_level[4] = {
+                ref_pyr[lev][0], ref_pyr[lev][1], ref_pyr[lev][2], ref_pyr[lev][3]
+            };
+            const float* dst_level[4] = {
+                dst_pyr[lev][0], dst_pyr[lev][1], dst_pyr[lev][2], dst_pyr[lev][3]
+            };
+            CvvdpBasebandDiffTaskData base_task = {
+                .ref_level = ref_level,
+                .dst_level = dst_level,
+                .d = d,
+                .lev_size = lev_size,
+                .sensitivity = {
+                    cvvdp_csf_sensitivity(&c->csf, L_bkg_pyr[lev][0], lev, 0),
+                    cvvdp_csf_sensitivity(&c->csf, L_bkg_pyr[lev][0], lev, 1),
+                    cvvdp_csf_sensitivity(&c->csf, L_bkg_pyr[lev][0], lev, 2),
+                    cvvdp_csf_sensitivity(&c->csf, L_bkg_pyr[lev][0], lev, 3),
+                },
+            };
+            cvvdp_baseband_diff_impl(&base_task, 0, (int)(lev_size * 4));
 
             for (int ch = 0; ch < 4; ch++) {
                 const float norm =
