@@ -20,6 +20,8 @@
 #include "internal.h"
 #if defined(__aarch64__)
 #include "cvvdp_neon.h"
+#elif defined(__x86_64__)
+#include "cvvdp_avx2.h"
 #else
 #include "cvvdp_c.h"
 #endif
