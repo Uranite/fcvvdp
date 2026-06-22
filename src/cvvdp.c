@@ -678,6 +678,8 @@ static void cvvdp_masked_diff_task(void* user_data,
                                    const int end)
 {
     CvvdpMaskedDiffTaskData* const data = (CvvdpMaskedDiffTaskData*)user_data;
+    const float wghts[4] =
+            {1.0f, CVVDP_CH_CHROM_W, CVVDP_CH_CHROM_W, CVVDP_CH_TRANS_W};
     for (int i = start; i < end; i++) {
         float cm[4];
         for (int ch = 0; ch < 4; ch++)
@@ -694,18 +696,7 @@ static void cvvdp_masked_diff_task(void* user_data,
             const float du = powf(diff, CVVDP_MASK_P) / (1.0f + mask);
             const float d_val = data->max_v * du / (data->max_v + du);
 
-            float weight = 1.0f;
-            switch (ch) {
-                case 1:
-                case 2:
-                    weight = CVVDP_CH_CHROM_W;
-                    break;
-                case 3:
-                    weight = CVVDP_CH_TRANS_W;
-                    break;
-            }
-
-            data->d[ch * data->lev_size + i] = d_val * weight;
+            data->d[ch * data->lev_size + i] = d_val * wghts[ch];
         }
     }
 }
