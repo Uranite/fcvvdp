@@ -85,6 +85,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
             .strip = strip,
         }),
+        .use_llvm = true,
     });
     cvvdpenc.root_module.addOptions("build_opts", options);
     cvvdpenc.root_module.addImport("c", c_module);
