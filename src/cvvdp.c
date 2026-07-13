@@ -234,10 +234,26 @@ static void cvvdp_parallel_for(CvvdpThreadPool* const pool,
     pthread_mutex_unlock(&pool->mutex);
 }
 
-static float cvvdp_csf_sensitivity(const Csf* const csf,
-                                   const float L_bkg_val,
-                                   const int band,
-                                   const int channel);
+static void cvvdp_csf_sensitivities(const Csf* const csf,
+                                    const float L_bkg_val,
+                                    const int band,
+                                    float sensitivities[4])
+{
+    float frac = 31.0f * (flog10f(L_bkg_val) - LOG10_L_BKG[0]) /
+        (LOG10_L_BKG[31] - LOG10_L_BKG[0]);
+
+    const int i_min = iclip((int)frac, 0, 30);
+    const int i_max = i_min + 1;
+    frac = frac - (float)i_min;
+
+    for (int channel = 0; channel < 4; channel++) {
+        const float* const lut =
+            csf->log_S_LUT + (band * 4 + channel) * CVVDP_LUT_SIZE;
+        const float log_S = lut[i_min] * frac + lut[i_max] *
+            (1.0f - frac) + CVVDP_SENSITIVITY_CORRECTION / 20.0f;
+        sensitivities[channel] = powf(10.0f, log_S);
+    }
+}
 
 const char* cvvdp_error_string(const FcvvdpError error) {
     switch (error) {
@@ -678,14 +694,15 @@ static void cvvdp_csf_weight_task(void* user_data,
                                   const int end)
 {
     CvvdpCsfWeightTaskData* const data = (CvvdpCsfWeightTaskData*)user_data;
-    for (int idx = start; idx < end; idx++) {
-        const int ch = idx / (int)data->lev_size;
-        const int i = idx - ch * (int)data->lev_size;
-        const float s = cvvdp_csf_sensitivity(data->csf, data->L_bkg[i],
-                                              data->lev, ch) *
-            data->ch_gain[ch];
-        data->ref_level[ch][i] *= s;
-        data->dst_level[ch][i] *= s;
+    float sensitivities[4];
+    for (int i = start; i < end; i++) {
+        cvvdp_csf_sensitivities(data->csf, data->L_bkg[i], data->lev,
+                                sensitivities);
+        for (int ch = 0; ch < 4; ch++) {
+            const float s = sensitivities[ch] * data->ch_gain[ch];
+            data->ref_level[ch][i] *= s;
+            data->dst_level[ch][i] *= s;
+        }
     }
 }
 
@@ -1042,7 +1059,7 @@ FcvvdpError cvvdp_csf_init(Csf* const csf,
     if (!csf->log_S_LUT) return CVVDP_ERROR_OUT_OF_MEMORY;
 
     for (int band = 0; band < csf->num_bands; band++) {
-        const float log_freq = log10f(freqs[band]);
+        const float log_freq = flog10f(freqs[band]);
 
         int rho_idx = 0;
         for (int i = 1; i < CVVDP_LUT_SIZE; i++) {
@@ -1081,7 +1098,7 @@ static float cvvdp_csf_sensitivity(const Csf* const csf,
                                    const int band,
                                    const int channel)
 {
-    float frac = 31.0f * (log10f(L_bkg_val) - LOG10_L_BKG[0]) /
+    float frac = 31.0f * (flog10f(L_bkg_val) - LOG10_L_BKG[0]) /
         (LOG10_L_BKG[31] - LOG10_L_BKG[0]);
 
     const int i_min = iclip((int)frac, 0, 30);
@@ -1294,7 +1311,7 @@ static FcvvdpError cvvdp_process_pyramid_threaded(FcvvdpCtx* const c,
                 .lev_size = lev_size,
                 .ch_gain = ch_gain,
             };
-            cvvdp_parallel_for(pool, (int)(lev_size * 4), 2048,
+            cvvdp_parallel_for(pool, (int)lev_size, 2048,
                                cvvdp_csf_weight_task, &csf_task);
 
             float** const min_abs = c->pyr_min_abs;
@@ -1520,14 +1537,22 @@ static FcvvdpError cvvdp_process_pyramid_serial(FcvvdpCtx* const c,
         const int is_baseband = (lev == num_levels - 1);
 
         if (!is_baseband) {
-            for (int ch = 0; ch < 4; ch++)
-                for (size_t i = 0; i < lev_size; i++) {
-                    const float s = cvvdp_csf_sensitivity(&c->csf,
-                                                          L_bkg_pyr[lev][i],
-                                                          lev, ch);
-                    ref_pyr[lev][ch][i] *= s * ch_gain[ch];
-                    dst_pyr[lev][ch][i] *= s * ch_gain[ch];
-                }
+            float* ref_level[4] = {
+                ref_pyr[lev][0], ref_pyr[lev][1], ref_pyr[lev][2], ref_pyr[lev][3]
+            };
+            float* dst_level[4] = {
+                dst_pyr[lev][0], dst_pyr[lev][1], dst_pyr[lev][2], dst_pyr[lev][3]
+            };
+            CvvdpCsfWeightTaskData csf_task = {
+                .csf = &c->csf,
+                .L_bkg = L_bkg_pyr[lev],
+                .ref_level = ref_level,
+                .dst_level = dst_level,
+                .lev = lev,
+                .lev_size = lev_size,
+                .ch_gain = ch_gain,
+            };
+            cvvdp_csf_weight_task(&csf_task, 0, (int)lev_size);
 
             float** const min_abs = c->pyr_min_abs;
             float** const blurred_min_abs = c->pyr_blurred_min_abs;

@@ -33,6 +33,14 @@ static inline float fclip(const float v, const float min, const float max) {
     return fmin(fmax(v, min), max);
 }
 
+static inline float flog10f(const float v) {
+    const union { const float d; const uint32_t x; } u = { v };
+    const int e = ((u.x >> 23) & 0xff) - 127;
+    const uint32_t m = u.x & 0x7fffff;
+    const float f = m * (1.0f / 8388608.0f);
+    return (e + f) * 0.30102999566f;
+}
+
 static inline float* cvvdp_alloc_float(const size_t count) {
     return (float*)calloc(count, sizeof(float));
 }
