@@ -24,7 +24,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 static const CvvdpSimdDispatch* g_cvvdp_dispatch = NULL;
 static pthread_once_t g_cvvdp_dispatch_once = PTHREAD_ONCE_INIT;
@@ -126,7 +130,13 @@ static void* cvvdp_thread_pool_worker(void* arg) {
 }
 
 static unsigned get_threadcnt(const unsigned threads) {
+#ifdef _WIN32
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    return threads ? threads : (unsigned)sysinfo.dwNumberOfProcessors;
+#else
     return threads ? threads : (unsigned)sysconf(_SC_NPROCESSORS_ONLN);
+#endif
 }
 
 static CvvdpThreadPool* cvvdp_thread_pool_create(const unsigned total_threads) {
